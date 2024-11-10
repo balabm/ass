@@ -9,8 +9,12 @@ import 'screens/review_submit_screen.dart';
 import 'screens/extracted_fields.dart';
 import 'screens/FieldEditScreen.dart';
 import 'screens/api_response_provider.dart'; // Import the provider class
+import 'package:firebase_core/firebase_core.dart';
+import 'config/firebase_config.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await FirebaseConfig.initialize(); 
   runApp(
     MultiProvider(
       providers: [

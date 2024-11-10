@@ -53,6 +53,10 @@ dependencies:
   record: ^4.4.4
   just_audio: ^0.9.34
   sqflite: ^2.0.0+4
+  firebase_core: ^2.24.2
+  firebase_auth: ^4.15.3
+  cloud_firestore: ^4.13.6
+  firebase_database: ^10.5.7
   
 
 

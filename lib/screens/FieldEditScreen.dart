@@ -16,12 +16,13 @@ import 'dart:math';
 import 'package:flutter/scheduler.dart';
 import 'package:image/image.dart' as img;
 import 'dart:async';
+import 'package:firebase_auth/firebase_auth.dart';
+import '../services/firebase_service.dart';
 
 class FieldEditScreen extends StatefulWidget {
   @override
   _FieldEditScreenState createState() => _FieldEditScreenState();
 }
-
 class _FieldEditScreenState extends State<FieldEditScreen> {
   String? imagePath;
   List<dynamic>? boundingBoxes;
@@ -47,6 +48,7 @@ class _FieldEditScreenState extends State<FieldEditScreen> {
   bool _needsScroll = false;
   Map<String, dynamic>? selectedBox;
   Set<Map<String, dynamic>> previouslySelectedBoxes = {};
+  FirebaseService _firebaseService = FirebaseService(userId: "userId");
 
   @override
   void initState() {
@@ -363,6 +365,7 @@ class _FieldEditScreenState extends State<FieldEditScreen> {
     }
   }
 
+  // Modify _sendToLLMApi to save to Firebase
   Future<void> _sendToLLMApi(String query, {bool isAudioQuery = false}) async {
     final uri = Uri.parse('http://192.168.77.227:8021/get_llm_response');
     try {
@@ -376,16 +379,23 @@ class _FieldEditScreenState extends State<FieldEditScreen> {
       );
 
       if (response.statusCode == 200) {
-        print('my LLM Response: ${response.body}');
         final Map<String, dynamic> llmResponse = jsonDecode(response.body);
-        _dbHelper.saveLlmResponse(jsonEncode(llmResponse));
+        
+        // // Save to Firebase
+        // await _firebaseService.saveFormProcessingSession(
+        //   ocrText: _ocrText ?? '',
+        //   asrResponse: isAudioQuery ? query : null,
+        //   llmResponse: llmResponse['response'] ?? 'No response available',
+        //   question: isAudioQuery ? query : '',
+        //   timestamp: DateTime.now(),
+        // );
 
         setState(() {
           chatMessages.add({
             'sender': 'assistant',
             'message': llmResponse['response'] ?? 'No response available',
           });
-          _needsScroll = true;  // Set flag to scroll after setState
+          _needsScroll = true;
         });
       } else {
         print('Failed to get LLM response: ${response.statusCode}');
@@ -394,7 +404,11 @@ class _FieldEditScreenState extends State<FieldEditScreen> {
       print('Error occurred while sending data to LLM API: $e');
     }
   }
+  
+ 
 
+
+  
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -443,41 +457,41 @@ class _FieldEditScreenState extends State<FieldEditScreen> {
   }
 
   Future<void> _sendDataToApi(Map<String, dynamic> box) async {
-    final uri = Uri.parse('http://192.168.77.227:8080/cv/ocr');
-    var request = http.MultipartRequest('POST', uri);
+  final uri = Uri.parse('http://192.168.77.227:8080/cv/ocr');
+  var request = http.MultipartRequest('POST', uri);
 
-    // Crop the image
-    String croppedImagePath = await _cropImage(
-        imagePath!,
-        box['x_center'].toInt(),
-        box['y_center'].toInt(),
-        box['width'].toInt(),
-        box['height'].toInt());
+  // Add the file
+  var file = File(imagePath as String);
+  if (await file.exists()) {
+    // Fix: Add filename and content-type to the MultipartFile
+    request.files.add(await http.MultipartFile.fromPath(
+      'file',
+      file.path,
+      // Optional: Add content type if needed
+      contentType: MediaType('image', 'png'),
+      
+    ));
+  } else {
+    print('Image file does not exist at the given path: $imagePath');
+    return;
+  }
 
-    var file = File(croppedImagePath);
-    if (await file.exists()) {
-      List<int> imageBytes = await file.readAsBytes();
-      request.files.add(http.MultipartFile.fromBytes('form_image', imageBytes,
-          filename: 'cropped_image.png'));
-    } else {
-      print(
-          'Cropped image file does not exist at the given path: $croppedImagePath');
-      return;
-    }
+  // Add other fields - Make sure to use the exact same field names as in the CURL command
+  request.fields['height'] = box['height'].toString();
+  request.fields['x_center'] = box['x_center'].toString();
+  request.fields['y_center'] = box['y_center'].toString();
+  request.fields['width'] = box['width'].toString();
+  request.fields['class_type'] = box['class']; // Make sure this matches the CURL parameter name
 
-    request.fields['x_center'] = box['x_center'].toString();
-    request.fields['y_center'] = box['y_center'].toString();
-    request.fields['width'] = box['width'].toString();
-    request.fields['height'] = box['height'].toString();
-    request.fields['class_type'] = box['class'];
+  try {
+    var response = await request.send();
+    final provider = Provider.of<ApiResponseProvider>(context, listen: false);
 
-    try {
-      var response = await request.send();
-      final provider = Provider.of<ApiResponseProvider>(context, listen: false);
-
-      if (response.statusCode == 200) {
-        final responseBody = await response.stream.bytesToString();
-        print('Data sent successfully! Response: $responseBody');
+    if (response.statusCode == 200) {
+      final responseBody = await response.stream.bytesToString();
+      print('Data sent successfully! Response: $responseBody');
+      
+    
 
         provider.setOcrResponse(responseBody);
 
@@ -494,14 +508,14 @@ class _FieldEditScreenState extends State<FieldEditScreen> {
         });
         _scrollToBottom();
       } else {
-        print('Failed to send data: ${response.statusCode}');
-        final errorResponse = await response.stream.bytesToString();
-        print('Error response: $errorResponse');
-      }
-    } catch (e) {
-      print('Error occurred while sending data: $e');
+      final errorResponse = await response.stream.bytesToString();
+      print('Failed to send data: ${response.statusCode}');
+      print('Error response: $errorResponse');
     }
+  } catch (e) {
+    print('Error occurred while sending data: $e');
   }
+}
 
   
 
