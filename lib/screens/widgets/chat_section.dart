@@ -47,19 +47,24 @@ class ChatSection extends StatelessWidget {
         final message = chatMessages[index];
         final isUser = message['sender'] == 'user';
         final messageContent = message['message'] ?? message['content'] ?? '';
-        final isAudioMessage = message['isAudioMessage'] == true || message['contentType'] == 'audio';
-        final audioPath = message['audioPath'];
+        final isAudioMessage = message['isAudioMessage'] == true || 
+                              message['contentType'] == 'audio';
+        // Get audio path from either direct path or recordedFilePath
+        final audioPath = message['audioPath'] ?? message['recordedFilePath'];
+        final audioBase64 = message['audioBase64'];
+
 
         return ChatBubble(
-          message: isAudioMessage 
-              ? 'Voice message'
-              : messageContent.toString(),
+          message: messageContent.toString(),
           isUser: isUser,
           isThinking: false,
+          
           isAudioMessage: isAudioMessage,
           audioPath: audioPath,
+          audioBase64: audioBase64,
+
           onPlayAudio: isAudioMessage && audioPath != null 
-            ? () => onPlayAudio(audioPath)
+            ? onPlayAudio
             : null,
         );
       },

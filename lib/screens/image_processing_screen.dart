@@ -55,8 +55,11 @@ class _ImageProcessingScreenState extends State<ImageProcessingScreen>
     super.didChangeDependencies();
     imagePath = ModalRoute.of(context)!.settings.arguments as String?;
     if (imagePath != null) {
-      originalFileName = p.basename(imagePath!); // Store the original filename
+      originalFileName = p.basename(imagePath!);
+
+       // Store the original filename
       _loadImage();
+
     }
   }
 

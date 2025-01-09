@@ -72,6 +72,9 @@ class ApiRepository {
       print('Image file does not exist at the given path: $imagePath');
       return null;
     }
+    print(file.path);
+    print('File exists: ${await file.exists()}');
+    print(box);
 
     request.files.add(await http.MultipartFile.fromPath(
       'file',

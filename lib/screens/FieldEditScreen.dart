@@ -57,18 +57,18 @@ class _FieldEditScreenState extends State<FieldEditScreen> with AudioHandler {
   @override
   void initState() {
     super.initState();
+    
     Permission.microphone.request();
     initializeAudio();
     _authProvider = Provider.of<AuthProvider>(context, listen: false);
     _loadUserName();
 
     // Set up auto-save timer
-    Timer.periodic(const Duration(seconds: 30), (timer) {
-      if (chatMessages.isNotEmpty) {
-        _saveResponsesToFirestore();
-      }
-    });
+    
   }
+
+
+
 
   Future<void> _loadUserName() async {
     if (!mounted) return;
@@ -81,8 +81,10 @@ class _FieldEditScreenState extends State<FieldEditScreen> with AudioHandler {
   }
 
   @override
-  void dispose() {
+  void dispose() async {
     disposeAudio();
+    await audioPlayer!.closePlayer();
+    audioPlayer = null;
     _messageController.dispose();
     _scrollController.dispose();
     _dragController.dispose();
@@ -92,6 +94,11 @@ class _FieldEditScreenState extends State<FieldEditScreen> with AudioHandler {
     super.dispose();
   }
 
+  void disposeAudio() {
+    // Add your audio disposal logic here
+  }
+
+ 
   void _performScroll() {
     if (_needsScroll && _scrollController.hasClients) {
       _scrollController.animateTo(
@@ -174,9 +181,9 @@ class _FieldEditScreenState extends State<FieldEditScreen> with AudioHandler {
         setState(() => _inputEnabled = true);
         return;
       }
-
+    final tt = File(recordedFilePath!);
       // Convert audio to base64
-      final bytes = await zipFile.readAsBytes();
+      final bytes = await tt.readAsBytes();
       final base64Audio = base64Encode(bytes);
 
       final asrResponse = await _apiRepository.sendAudioToApi(zipFile);
@@ -190,12 +197,15 @@ class _FieldEditScreenState extends State<FieldEditScreen> with AudioHandler {
           asrData['dummy_text'] ?? 'No transcription available';
 
       setState(() {
-        _pendingAsrResponse = transcribedText;
         chatMessages.add({
           'sender': 'user',
           'message': 'Audio message • $transcribedText',
           'audioBase64': base64Audio,
+          'audioPath': recordedFilePath, // Add this line to include the audio path
+          'timestamp': DateTime.now().toIso8601String(), // Add timestamp
+
           'isAudioMessage': true,
+
         });
         _inputEnabled = true;
       });
@@ -241,7 +251,8 @@ class _FieldEditScreenState extends State<FieldEditScreen> with AudioHandler {
         });
         _isThinking = false;
         _inputEnabled = true;
-        _needsScroll = true;
+        _needsScroll = true; _performScroll();
+
       });
 
       // Save responses to Firestore
@@ -263,11 +274,11 @@ class _FieldEditScreenState extends State<FieldEditScreen> with AudioHandler {
       final firebaseProvider =
           Provider.of<FirebaseProvider>(context, listen: false);
 
-      // Clean up filename
-      final fileName = path
-          .basename(imagePath!)
-          .replaceAll('.', '_')
-          .replaceAll('_png_png', '_png');
+      // // Clean up filename
+            final fileName = path
+            .basename(imagePath!);
+      //     .replaceAll('.', '_')
+      //     .replaceAll('_png_png', '_png');
 
       // Ensure messages are not empty
       if (chatMessages.isEmpty) {
@@ -341,9 +352,9 @@ class _FieldEditScreenState extends State<FieldEditScreen> with AudioHandler {
       if (imagePath != null) {
         // Clean up filename to match database format
         final fileName = path
-            .basename(imagePath!)
-            .replaceAll('.', '_')
-            .replaceAll('_png_png', '_png'); // Fix double extension
+            .basename(imagePath!);
+            // .replaceAll('.', '_')
+            // .replaceAll('_png_png', '_png'); // Fix double extension
         print('Loading form data for: $fileName');
         _loadExistingFormData(fileName);
       } else {
@@ -368,84 +379,76 @@ class _FieldEditScreenState extends State<FieldEditScreen> with AudioHandler {
   }
 
 // In FieldEditScreen class
-  Future<void> _loadExistingFormData(String formId) async {
-    if (_isLoadingFormData) return;
+  // In FieldEditScreen, modify image loading:
 
-    setState(() {
-      _isLoadingData = true;
-      _isLoadingFormData = true;
-    });
+ // In FieldEditScreen.dart
+Future<void> _loadExistingFormData(String fileName) async {
+  setState(() => _isLoadingData = true);
 
-    final uid = _authProvider.user?.uid;
-    if (uid == null) {
-      setState(() {
-        _isLoadingData = false;
-        _isLoadingFormData = false;
-      });
-      return;
-    }
+  try {
+    // Clean up any existing audio player
+    disposeAudio();
+    
+    final firebaseProvider = Provider.of<FirebaseProvider>(context, listen: false);
+    final existingForm = await firebaseProvider.getFormWithInteractions(
+      _authProvider.user!.uid, 
+      fileName
+    );
 
-    try {
-      final firebaseProvider =
-          Provider.of<FirebaseProvider>(context, listen: false);
-      final existingForm =
-          await firebaseProvider.getFormWithInteractions(uid, formId);
+    if (existingForm != null && mounted) {
+      final List<Map<String, dynamic>> messages = 
+        List<Map<String, dynamic>>.from(existingForm['interactions']?[0]?['messages'] ?? []);
+      
+      // Initialize new audio player
+      await initializeAudio();
+      
+      // Process audio messages
+      for (var message in messages) {
+        if (message['audioBase64'] != null) {
+          try {
+            final tempDir = await getTemporaryDirectory();
+            final timestamp = DateTime.now().millisecondsSinceEpoch;
+            final audioFile = File('${tempDir.path}/audio_$timestamp.wav');
+            
+            await audioFile.writeAsBytes(base64Decode(message['audioBase64']));
+            message['audioPath'] = audioFile.path;
+            message['isAudioMessage'] = true;
 
-      if (existingForm != null && mounted) {
-        // Set original image path for API calls
-        imagePath = existingForm['imagePath'] ?? imagePath;
-
-        setState(() {
-          // Load bounding boxes
-          boundingBoxes = (existingForm['boundingBoxes'] as List<dynamic>?)
-                  ?.map((box) {
-                return Map<String, dynamic>.from(box as Map<dynamic, dynamic>);
-              }).toList() ??
-              [];
-
-          // Load current field data
-          if (existingForm['currentSelectedField'] != null) {
-            final currentField = Map<String, dynamic>.from(
-                existingForm['currentSelectedField'] as Map<dynamic, dynamic>);
-            _selectedFieldName = currentField['name']?.toString();
-            _ocrText = currentField['ocrText']?.toString();
+            // Print the audio file path for debugging
+            print('Audio file path: ${audioFile.path}');
+            print('File exists: ${audioFile.existsSync()}');
+            print('File size: ${await audioFile.length()} bytes');
+          } catch (e) {
+            print('Error processing audio message: $e');
           }
+        }
+      }
 
-          // Load chat messages
-          chatMessages.clear();
-          if (existingForm['interactions'] != null &&
-              (existingForm['interactions'] as List).isNotEmpty) {
-            final interaction = existingForm['interactions'][0];
-            final messages = (interaction['messages'] as List?)?.map((msg) {
-                  return Map<String, dynamic>.from(
-                      msg as Map<dynamic, dynamic>);
-                }).toList() ??
-                [];
-            chatMessages.addAll(messages);
+      if (mounted) {
+        setState(() {
+          chatMessages = messages;
+          boundingBoxes = List<Map<String, dynamic>>.from(
+            existingForm['boundingBoxes'] ?? []
+          );
+          
+          if (existingForm['currentSelectedField'] != null) {
+            final currentField = existingForm['currentSelectedField'];
+            _selectedFieldName = currentField['name'];
+            _ocrText = currentField['ocrText'];
           }
 
           _showBottomSheet = chatMessages.isNotEmpty;
           _inputEnabled = true;
           _isFieldLocked = chatMessages.isNotEmpty;
         });
-
-        // Update formId with original filename for API calls
-        formId = existingForm['originalFileName'] ?? formId;
-
-        print('Successfully loaded ${chatMessages.length} messages');
-      }
-    } catch (e) {
-      print('Error loading form data: $e');
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isLoadingData = false;
-          _isLoadingFormData = false;
-        });
       }
     }
+  } catch (e) {
+    print('Error loading form data: $e');
+  } finally {
+    setState(() => _isLoadingData = false);
   }
-
+}
   void _scrollToBottom() => setState(() {
         _needsScroll = true;
         WidgetsBinding.instance.addPostFrameCallback((_) {

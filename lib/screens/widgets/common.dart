@@ -23,6 +23,34 @@ class Common {
       );
   }
 
+
+  static void showEnhancedMessage(BuildContext context, String message, { 
+  bool isError = false, 
+  IconData? icon, 
+  Duration duration = const Duration(seconds: 3) 
+}) { 
+  if (!context.mounted) return; 
+  ScaffoldMessenger.of(context).showSnackBar( 
+    SnackBar( 
+      behavior: SnackBarBehavior.floating, 
+      shape: RoundedRectangleBorder( 
+        borderRadius: BorderRadius.circular(10) 
+      ), 
+      margin: const EdgeInsets.all(16), 
+      duration: duration, 
+      backgroundColor: isError ? Colors.teal : const Color.fromRGBO(102, 187, 106, 1), 
+      content: Row( 
+        children: [ 
+          if (icon != null) Icon(icon, color: Colors.white), 
+          if (icon != null) const SizedBox(width: 8), 
+          Expanded(child: Text(message, style: const TextStyle(color: Colors.white))), 
+        ], 
+      ), 
+    ) 
+  ); 
+}
+
+
   static void showMessage(BuildContext context, String message,
       {bool isError = false}) {
     if (!context.mounted) return;

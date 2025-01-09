@@ -64,19 +64,24 @@ class FirebaseProvider with ChangeNotifier {
     }
   }
 
+
+
   // Delete a document from a Firestore collection
   Future<void> deleteDocument(String collectionPath, String docId) async {
-    _setLoading(true);
-    try {
-      await _firestore.collection(collectionPath).doc(docId).delete();
-      await fetchCollection(collectionPath); // Refresh data
-    } catch (e) {
-      print('Error deleting document: $e');
-    } finally {
-      _setLoading(false);
-    }
+  _setLoading(true);
+  try {
+    // In deleteDocument
+    print('Firestore reference: ${_firestore.collection(collectionPath).doc(docId).path}');
+    print('Deleting document: $docId from collection: $collectionPath'); // Debug log
+    await _firestore.collection(collectionPath).doc(docId).delete();
+    print('Document deleted successfully'); // Debug log
+    await fetchCollection(collectionPath); // Refresh data
+  } catch (e) {
+    print('Error deleting document: $e'); // Debug log
+  } finally {
+    _setLoading(false);
   }
-
+}
   Future<void> saveFormWithImage({
     required String uid,
     required String imagePath,
@@ -219,39 +224,32 @@ class FirebaseProvider with ChangeNotifier {
   Future<String> saveFormWithDetails({
     required String uid,
     required String imagePath,
-    required String selectedField,
+    required String selectedField, 
     required String ocrText,
     required List<Map<String, dynamic>> chatMessages,
     required List<dynamic> boundingBoxes,
   }) async {
     _setLoading(true);
     try {
-      // Clean up filename to match database format
-      final fileName = path
-          .basename(imagePath)
-          .replaceAll('.', '_')
-          .replaceAll('_png_png', '_png'); // Fix double extension
-
+      // Use original filename as document ID
+      final originalFileName = path.basename(imagePath);
+      
       final formRef = _firestore
           .collection('users')
           .doc(uid)
           .collection('forms')
-          .doc(fileName);
-
-      print('Saving form with ID: $fileName');
+          .doc(originalFileName);
 
       // Convert image to base64
       final File imageFile = File(imagePath);
       final List<int> imageBytes = await imageFile.readAsBytes();
       final String base64Image = base64Encode(imageBytes);
 
-      // Save main form document
       await formRef.set({
-        'id': fileName,
         'timestamp': FieldValue.serverTimestamp(),
-        'lastInteractionAt': FieldValue.serverTimestamp(),
+        'lastInteractionAt': FieldValue.serverTimestamp(), 
+        'fileName': originalFileName,
         'imageBase64': base64Image,
-        'fileName': path.basename(imagePath),
         'boundingBoxes': boundingBoxes,
         'currentSelectedField': {
           'name': selectedField,
@@ -259,20 +257,22 @@ class FirebaseProvider with ChangeNotifier {
         },
       }, SetOptions(merge: true));
 
-      // Instead of separate docs, store all messages in a single 'interactionLog' doc
-      final interactionDoc =
-          formRef.collection('interactions').doc('interactionLog');
+      // Store messages in interaction subcollection
+      final interactionDoc = formRef.collection('interactions').doc('interactionLog');
+      final messages = chatMessages.map((msg) => {
+        'sender': msg['sender'],
+        'message': msg['message'],
+        'isAudioMessage': msg['isAudioMessage'] ?? false,
+        'audioBase64': msg['audioBase64'],
+        'timestamp': DateTime.now().toIso8601String(),
+      }).toList();
+
       await interactionDoc.set({
         'timestamp': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
+        'messages': messages,
+      });
 
-      await _appendMessages(
-          interactionDoc, chatMessages, selectedField, ocrText);
-
-      notifyListeners();
-
-      print('Saved form data: ${formRef.id}');
-      return formRef.id; // Return the form ID
+      return originalFileName;
     } catch (e) {
       print('Error saving form data: $e');
       throw Exception('Failed to save form data');
@@ -396,19 +396,18 @@ class FirebaseProvider with ChangeNotifier {
   }
 
   Future<List<Map<String, dynamic>>> getSubmittedForms() async {
-    try {
-      final querySnapshot = await _firestore.collectionGroup('forms').get();
-      return querySnapshot.docs.map((doc) {
-        final data = doc.data();
-        return {
-          'formName': data['fileName'] ?? 'Unnamed Form',
-          'formId': doc.id,
-          'imageBase64': data['imageBase64'] ?? '',
-        };
-      }).toList();
-    } catch (e) {
-      print('Error fetching submitted forms: $e');
-      return [];
-    }
+  try {
+    final querySnapshot = await _firestore.collectionGroup('forms').get();
+    return querySnapshot.docs.map((doc) {
+      final data = doc.data();
+      return {
+        'formName': data['fileName'] ?? 'Unnamed Form',
+        'formId': doc.id,
+        'imageBase64': data['imageBase64'] ?? '',
+      };
+    }).toList();
+  } catch (e) {
+    print('Error fetching submitted forms: $e');
+    return [];
   }
-}
+}}

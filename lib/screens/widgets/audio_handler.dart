@@ -30,9 +30,24 @@ mixin AudioHandler<T extends StatefulWidget> on State<T> {
   }
 
   Future<void> initializePlayer() async {
-    await audioPlayer!.openPlayer();
+  try {
+    if (audioPlayer == null) {
+      audioPlayer = FlutterSoundPlayer();
+    }
+    
+    if (!audioPlayer!.isOpen()) {
+      await audioPlayer!.openPlayer();
+      await audioPlayer!.setSubscriptionDuration(const Duration(milliseconds: 100));
+    }
     print("Player initialized");
+  } catch (e) {
+    print("Error initializing player: $e");
+    // Try to recover by creating a new instance
+    audioPlayer = FlutterSoundPlayer();
+    await audioPlayer!.openPlayer();
   }
+}
+
 
   void disposeAudio() {
     recordingTimer?.cancel();
@@ -43,34 +58,45 @@ mixin AudioHandler<T extends StatefulWidget> on State<T> {
   }
 
   Future<void> startRecording() async {
-    try {
-      Directory tempDir = await getTemporaryDirectory();
-      recordedFilePath = path.join(tempDir.path, 'recorded_audio.wav');
+  try {
+    Directory tempDir = await getTemporaryDirectory();
+    // Generate unique filename using timestamp
+    String timestamp = DateTime.now().millisecondsSinceEpoch.toString();
+    recordedFilePath = path.join(tempDir.path, 'audio_$timestamp.wav');
 
-      await audioRecorder!.startRecorder(
-        toFile: recordedFilePath,
-        codec: Codec.pcm16WAV,
-      );
-
-      setState(() {
-        isRecording = true;
-        recordingStartTime = DateTime.now();
-        recordingDuration = Duration.zero;
-      });
-
-      recordingTimer = Timer.periodic(const Duration(milliseconds: 100), (timer) {
-        if (recordingStartTime != null && mounted) {
-          setState(() {
-            recordingDuration = DateTime.now().difference(recordingStartTime!);
-          });
-        }
-      });
-
-      print("Recording started");
-    } catch (e) {
-      print("Error starting recording: $e");
+     // Make sure recorder is initialized
+    if (!audioRecorder!.isRecording) {
+      await initializeRecorder();
     }
+
+    await audioRecorder!.startRecorder(
+      toFile: recordedFilePath,
+      codec: Codec.pcm16WAV,
+      sampleRate: 16000, // Specify a standard sample rate
+      numChannels: 1,    // Mono recording
+    );
+
+    setState(() {
+      isRecording = true;
+      recordingStartTime = DateTime.now();
+      recordingDuration = Duration.zero;
+    });
+
+    recordingTimer = Timer.periodic(const Duration(milliseconds: 100), (timer) {
+      if (recordingStartTime != null && mounted) {
+        setState(() {
+          recordingDuration = DateTime.now().difference(recordingStartTime!);
+        });
+      }
+    });
+
+    print("Recording started at: $recordedFilePath");
+  } catch (e) {
+    print("Error starting recording: $e");
+    // Try to recover
+    await initializeRecorder();
   }
+}
 
   Future<void> cancelRecording() async {
     try {
@@ -108,31 +134,55 @@ mixin AudioHandler<T extends StatefulWidget> on State<T> {
       print("Error stopping recording: $e");
     }
   }
+Future<void> playAudio(String audioPath) async {
+  try {
+    print('Playing audio from path: $audioPath');
+    
+    // Check if file exists and is valid
+    if (!File(audioPath).existsSync()) {
+      print('Audio file does not exist at path: $audioPath');
+      return;
+    }
 
-  Future<void> playAudio(String audioPath) async {
+    if (isPlaying) {
+      print('Stopping current playback');
+      await audioPlayer!.stopPlayer();
+      setState(() => isPlaying = false);
+      return;
+    }
+
+    // Make sure the player is properly initialized
+    if (!audioPlayer!.isOpen()) {
+      await initializePlayer();
+    }
+
+    print('Starting playback');
+    await audioPlayer!.startPlayer(
+      fromURI: audioPath,
+      codec: Codec.pcm16WAV, // Specify the codec since you're recording in WAV
+      whenFinished: () {
+        print('Playback finished');
+        if (mounted) {
+          setState(() => isPlaying = false);
+        }
+      },
+    );
+    
+    setState(() => isPlaying = true);
+  } catch (e) {
+    print('Error playing audio: $e');
+    // Reset playing state in case of error
+    setState(() => isPlaying = false);
+    
+    // Try to reinitialize player if there was an error
     try {
-      if (isPlaying) {
-        await audioPlayer!.stopPlayer();
-        setState(() {
-          isPlaying = false;
-        });
-      } else {
-        await audioPlayer!.startPlayer(
-          fromURI: audioPath,
-          whenFinished: () {
-            setState(() {
-              isPlaying = false;
-            });
-          },
-        );
-        setState(() {
-          isPlaying = true;
-        });
-      }
-    } catch (e) {
-      print("Error playing audio: $e");
+      await audioPlayer!.closePlayer();
+      await initializePlayer();
+    } catch (reinitError) {
+      print('Error reinitializing player: $reinitError');
     }
   }
+}
 
   Future<String> zipRecordedAudio() async {
     Directory tempDir = await getTemporaryDirectory();

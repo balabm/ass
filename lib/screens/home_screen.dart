@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:formbot/providers/firebaseprovider.dart';
 import 'package:formbot/screens/widgets/common.dart';
@@ -60,6 +61,8 @@ class _HomeScreenState extends State<HomeScreen>
 
   Future<void> _loadData() async {
     try {
+      
+
       await Future.wait([
         _loadSubmittedForms(),
         _loadUserName(),
@@ -67,7 +70,7 @@ class _HomeScreenState extends State<HomeScreen>
       ]);
       _animationController.forward();
     } catch (e) {
-      Common.showMessage(context, 'Error loading data: ${e.toString()}',
+      Common.showEnhancedMessage(context, 'Error loading data: ${e.toString()}',
           isError: true);
     } finally {
       if (mounted) {
@@ -79,6 +82,8 @@ class _HomeScreenState extends State<HomeScreen>
   Future<void> _loadSubmittedForms() async {
     final firebaseProvider = Provider.of<FirebaseProvider>(context, listen: false);
     final forms = await firebaseProvider.getSubmittedForms();
+    print('Fetched forms: $forms'); // Log the fetched forms
+
     if (mounted) {
       setState(() => _submittedForms = forms);
     }
@@ -106,9 +111,9 @@ class _HomeScreenState extends State<HomeScreen>
 
       setState(() => _capturedImages.remove(imagePath));
       await prefs.setStringList('capturedImages', _capturedImages);
-      Common.showMessage(context, 'Image deleted successfully');
+      Common.showEnhancedMessage(context, 'Image deleted successfully');
     } catch (e) {
-      Common.showMessage(context, 'Error deleting image: ${e.toString()}',
+      Common.showEnhancedMessage(context, 'Error deleting image: ${e.toString()}',
           isError: true);
     } finally {
       if (mounted) {
@@ -173,42 +178,117 @@ class _HomeScreenState extends State<HomeScreen>
           ],
         ),
       );
+Widget _buildFormTile(Map<String, dynamic> form) {
+  final formName = form['formName'] ?? 'Unnamed Form';
+  final formId = form['formId'];
+  final imageBase64 = form['imageBase64'];
 
-  Widget _buildFormTile(Map<String, dynamic> form) {
-    final formName = form['formName'] ?? 'Unnamed Form';
-    final formId = form['formId'];
-    final imageBase64 = form['imageBase64'];
-    
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: Container(
-        decoration: _boxDecoration,
-        child: ListTile(
-          contentPadding: const EdgeInsets.all(12),
-          leading: Icon(Icons.description, color: Colors.teal),
-          title: Text(
-            formName,
-            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
-          ),
-          onTap: () {
-            // Save base64 image to temporary file and get path
-            final tempDir = Directory.systemTemp;
-            final tempFile = File('${tempDir.path}/$formId.png');
-            tempFile.writeAsBytesSync(base64Decode(imageBase64));
-            
-            Navigator.pushNamed(
-              context,
-              '/field_edit_screen',
-              arguments: {
-                'imagePath': tempFile.path,
-                'formId': formId,
-                // Additional arguments will be loaded from Firebase
-              },
-            );
-          },
+  return Padding(
+    padding: const EdgeInsets.only(bottom: 12),
+    child: Container(
+      decoration: _boxDecoration,
+      child: ListTile(
+        contentPadding: const EdgeInsets.all(12),
+        leading: Icon(Icons.description, color: Colors.teal),
+        title: Text(
+          formName,
+          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
         ),
+        trailing: PopupMenuButton<String>(
+          onSelected: (value) {
+            if (value == 'delete') {
+              _deleteForm(formId, formName);
+            }
+          },
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          color: Colors.white,
+          itemBuilder: (BuildContext context) {
+            return [
+              PopupMenuItem<String>(
+                value: 'delete',
+                child: Row(
+                  children: [
+                    Icon(Icons.delete, color: Colors.redAccent, size: 20),
+                    SizedBox(width: 8),
+                    Text(
+                      'Delete',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.black87,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ];
+          },
+          icon: Icon(
+            Icons.more_vert,
+            color: Colors.teal,
+          ),
+        ),
+        onTap: () {
+          final tempDir = Directory.systemTemp;
+          final tempFile = File('${tempDir.path}/$formName');
+          tempFile.writeAsBytesSync(base64Decode(imageBase64));
+
+          Navigator.pushNamed(
+            context,
+            '/field_edit_screen',
+            arguments: {
+              'imagePath': tempFile.path,
+              'formId': formId,
+            },
+          );
+        },
       ),
-    );
+    ),
+  );
+}
+
+ Future<void> _deleteForm(String formId, String formName) async {
+    try {
+      setState(() => _isLoading = true);
+
+      // Print the formId
+      print('Deleting form with ID: $formId');
+      
+
+      // Fetch the UID directly from FirebaseAuth
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+      print('Fetched User ID: $uid');
+
+      if (uid == null) {
+        throw Exception('User ID not found. Please sign in again.');
+      }
+
+      // Construct the collection path
+      final collectionPath = 'users/$uid/forms';
+      print('Collection path: $collectionPath');
+
+      // Delete from Firebase
+      final firebaseProvider = Provider.of<FirebaseProvider>(context, listen: false);
+      await firebaseProvider.deleteDocument(collectionPath, formId); // Correct collection path
+      
+      // Remove from local state and Firebase
+      setState(() {
+        _submittedForms.removeWhere((form) => form['formId'] == formId);
+      });
+      print('Form removed from local state: $formId'); // Debug log
+
+
+
+      Common.showEnhancedMessage(context, 'Form deleted successfully');
+    } catch (e) {
+      Common.showEnhancedMessage(context, 'Error deleting form: ${e.toString()}', isError: true);
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
   }
 
   Widget _buildFormList() => _submittedForms.isNotEmpty
@@ -249,7 +329,8 @@ class _HomeScreenState extends State<HomeScreen>
           actions: [
             IconButton(
               icon: const Icon(Icons.refresh, color: Colors.white),
-              onPressed: _loadData,
+              onPressed: _loadData, 
+              // onPressed: () => Common.showEnhancedMessage(context, 'Image deleted successfully',isError: true, icon: Icons.check, duration: const Duration(seconds: 3)),
             ),
           ],
         ),
@@ -290,4 +371,4 @@ class _HomeScreenState extends State<HomeScreen>
           ),
         ),
       );
-}
+} 
